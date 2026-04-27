@@ -70,14 +70,26 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	}
 	s.port = port
 
+	// llama.cpp opens the model with fopen(), which on Windows goes through
+	// the ANSI codepage and corrupts non-ASCII characters in the path
+	// (accented chars, Cyrillic, CJK, ...). Workaround: spawn with CWD set
+	// to the model's directory (Go uses CreateProcessW, so unicode is fine
+	// for the CWD itself) and pass only the ASCII basename as -m.
+	absModel, err := filepath.Abs(s.cfg.ModelPath)
+	if err != nil {
+		return fmt.Errorf("llama: resolve model path: %w", err)
+	}
+	modelDir, modelBase := filepath.Dir(absModel), filepath.Base(absModel)
+
 	args := []string{
 		"--host", s.cfg.Host,
 		"--port", fmt.Sprintf("%d", port),
-		"-m", s.cfg.ModelPath,
+		"-m", modelBase,
 	}
 	args = append(args, s.cfg.ExtraArgs...)
 
 	cmd := exec.CommandContext(ctx, s.cfg.BinPath, args...)
+	cmd.Dir = modelDir
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
