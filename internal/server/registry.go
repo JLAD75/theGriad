@@ -13,6 +13,7 @@ type Worker struct {
 	NumCPU        int
 	GPUs          []string
 	Version       string
+	LoadedModel   string
 	ConnectedAt   time.Time
 	LastHeartbeat time.Time
 	Idle          bool

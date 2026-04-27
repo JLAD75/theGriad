@@ -35,7 +35,7 @@ go build -o griad ./cmd/griad
 # Terminal 1 — serveur
 ./griad server --addr :8080
 
-# Terminal 2 — worker
+# Terminal 2 — worker en mode heartbeat (sans modèle)
 ./griad worker --server ws://localhost:8080/ws/worker
 
 # Terminal 3 — vérifier
@@ -43,12 +43,25 @@ curl http://localhost:8080/health
 curl http://localhost:8080/api/workers
 ```
 
+### Worker avec un vrai modèle
+
+Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/ggml-org/llama.cpp/releases)). Récupère un binaire pré-compilé pour ta plateforme et un modèle GGUF, puis :
+
+```bash
+./griad worker \
+  --server ws://localhost:8080/ws/worker \
+  --llama-server /chemin/vers/llama-server[.exe] \
+  --model /chemin/vers/modele.gguf
+```
+
+Le worker spawne `llama-server` sur un port libre local (127.0.0.1), attend que `/health` réponde OK, puis se déclare au serveur avec son modèle chargé. Si llama-server crashe, le worker se déconnecte.
+
 ## Roadmap MVP
 
 - [x] Squelette repo + binaire multi-commandes
 - [x] Registre des workers + heartbeat WS
+- [x] Worker : démarrage de `llama-server` en sous-processus
 - [ ] Catalogue de modèles côté serveur (download GGUF)
-- [ ] Worker : démarrage de `llama-server` en sous-processus
 - [ ] Endpoint chat OpenAI-compatible côté serveur, routé vers un worker capable
 - [ ] TUI chat (Bubble Tea)
 - [ ] Idle detection Windows (`GetLastInputInfo`)

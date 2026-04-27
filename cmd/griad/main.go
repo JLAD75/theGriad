@@ -45,6 +45,7 @@ func usage() {
 usage:
   griad server [--addr :8080]
   griad worker --server ws://host:8080/ws/worker [--id NAME]
+               [--llama-server PATH --model PATH [--llama-host H] [--llama-port N]]
   griad chat   --server http://host:8080
   griad version`)
 }
@@ -67,12 +68,23 @@ func runWorker(args []string) {
 	fs := flag.NewFlagSet("worker", flag.ExitOnError)
 	serverURL := fs.String("server", "ws://localhost:8080/ws/worker", "orchestrator WS URL")
 	id := fs.String("id", "", "worker id (default: hostname-timestamp)")
+	llamaBin := fs.String("llama-server", "", "path to llama-server binary (optional; if unset, runs in heartbeat-only mode)")
+	model := fs.String("model", "", "path to GGUF model file (required if --llama-server is set)")
+	llamaHost := fs.String("llama-host", "127.0.0.1", "host for the local llama-server bind")
+	llamaPort := fs.Int("llama-port", 0, "port for llama-server (0 = pick a free one)")
 	_ = fs.Parse(args)
 
 	ctx, stop := signalCtx()
 	defer stop()
 
-	if err := worker.Run(ctx, worker.Config{ServerURL: *serverURL, WorkerID: *id}); err != nil {
+	if err := worker.Run(ctx, worker.Config{
+		ServerURL: *serverURL,
+		WorkerID:  *id,
+		LlamaBin:  *llamaBin,
+		ModelPath: *model,
+		LlamaHost: *llamaHost,
+		LlamaPort: *llamaPort,
+	}); err != nil {
 		log.Fatalf("worker: %v", err)
 	}
 }

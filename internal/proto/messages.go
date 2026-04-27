@@ -20,13 +20,14 @@ type Envelope struct {
 }
 
 type Hello struct {
-	WorkerID string   `json:"worker_id"`
-	Hostname string   `json:"hostname"`
-	OS       string   `json:"os"`
-	Arch     string   `json:"arch"`
-	NumCPU   int      `json:"num_cpu"`
-	GPUs     []string `json:"gpus,omitempty"`
-	Version  string   `json:"version"`
+	WorkerID    string   `json:"worker_id"`
+	Hostname    string   `json:"hostname"`
+	OS          string   `json:"os"`
+	Arch        string   `json:"arch"`
+	NumCPU      int      `json:"num_cpu"`
+	GPUs        []string `json:"gpus,omitempty"`
+	Version     string   `json:"version"`
+	LoadedModel string   `json:"loaded_model,omitempty"`
 }
 
 type Welcome struct {

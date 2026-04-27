@@ -120,17 +120,18 @@ func (s *Server) serveWorker(conn *websocket.Conn) {
 	}
 
 	worker := &Worker{
-		ID:       hello.WorkerID,
-		Hostname: hello.Hostname,
-		OS:       hello.OS,
-		Arch:     hello.Arch,
-		NumCPU:   hello.NumCPU,
-		GPUs:     hello.GPUs,
-		Version:  hello.Version,
+		ID:          hello.WorkerID,
+		Hostname:    hello.Hostname,
+		OS:          hello.OS,
+		Arch:        hello.Arch,
+		NumCPU:      hello.NumCPU,
+		GPUs:        hello.GPUs,
+		Version:     hello.Version,
+		LoadedModel: hello.LoadedModel,
 	}
 	s.registry.Add(worker)
 	defer s.registry.Remove(worker.ID)
-	log.Printf("worker connected: id=%s host=%s os=%s/%s cpus=%d", worker.ID, worker.Hostname, worker.OS, worker.Arch, worker.NumCPU)
+	log.Printf("worker connected: id=%s host=%s os=%s/%s cpus=%d model=%q", worker.ID, worker.Hostname, worker.OS, worker.Arch, worker.NumCPU, worker.LoadedModel)
 
 	// 2) send Welcome
 	welcome := proto.Welcome{
