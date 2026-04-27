@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -44,6 +45,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	loadedModel := ""
+	llamaURL := ""
 	var sup *llama.Supervisor
 	if cfg.LlamaBin != "" && cfg.ModelPath != "" {
 		s, err := llama.New(llama.Config{
@@ -65,6 +67,7 @@ func Run(ctx context.Context, cfg Config) error {
 			return err
 		}
 		loadedModel = filepath.Base(cfg.ModelPath)
+		llamaURL = sup.URL()
 	} else if cfg.LlamaBin != "" || cfg.ModelPath != "" {
 		return errors.New("--llama-server and --model must be set together")
 	} else {
@@ -74,7 +77,7 @@ func Run(ctx context.Context, cfg Config) error {
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second
 	for {
-		err := connectAndServe(ctx, cfg, loadedModel, sup)
+		err := runSession(ctx, cfg, loadedModel, llamaURL, sup)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -93,7 +96,125 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 }
 
-func connectAndServe(ctx context.Context, cfg Config, loadedModel string, sup *llama.Supervisor) error {
+// session is the state of a single active WS connection to the orchestrator.
+type session struct {
+	conn        *websocket.Conn
+	loadedModel string
+	llamaURL    string
+
+	out chan []byte // serialized envelopes pending write
+
+	mu       sync.Mutex
+	inflight map[string]context.CancelFunc // request_id -> cancel
+}
+
+func newSession(conn *websocket.Conn, loadedModel, llamaURL string) *session {
+	return &session{
+		conn:        conn,
+		loadedModel: loadedModel,
+		llamaURL:    llamaURL,
+		out:         make(chan []byte, 64),
+		inflight:    make(map[string]context.CancelFunc),
+	}
+}
+
+// send queues an envelope for the writeLoop. Drops on full buffer rather
+// than blocking the caller (heartbeats and chunks are time-sensitive; a
+// stalled WS will surface via the writeLoop's deadline anyway).
+func (s *session) send(t proto.MessageType, payload any) {
+	msg, err := proto.Encode(t, payload)
+	if err != nil {
+		log.Printf("encode %s: %v", t, err)
+		return
+	}
+	select {
+	case s.out <- msg:
+	default:
+		log.Printf("send buffer full, dropping %s", t)
+	}
+}
+
+func (s *session) writeLoop(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case msg := <-s.out:
+			_ = s.conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+			if err := s.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (s *session) heartbeatLoop(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.send(proto.MsgHeartbeat, proto.Heartbeat{Idle: false}) // TODO: real idle
+		}
+	}
+}
+
+func (s *session) readLoop(ctx context.Context) error {
+	for {
+		_, raw, err := s.conn.ReadMessage()
+		if err != nil {
+			return err
+		}
+		env, err := proto.Decode(raw)
+		if err != nil {
+			log.Printf("decode: %v", err)
+			continue
+		}
+		switch env.Type {
+		case proto.MsgChatRequest:
+			var req proto.ChatRequest
+			if err := json.Unmarshal(env.Data, &req); err != nil {
+				log.Printf("decode chat_request: %v", err)
+				continue
+			}
+			go s.handleChat(ctx, req)
+		case proto.MsgCancel:
+			var c proto.Cancel
+			if err := json.Unmarshal(env.Data, &c); err != nil {
+				continue
+			}
+			s.cancelInflight(c.RequestID)
+		default:
+			// ignore for now
+		}
+	}
+}
+
+func (s *session) registerInflight(reqID string, cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inflight[reqID] = cancel
+}
+
+func (s *session) clearInflight(reqID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.inflight, reqID)
+}
+
+func (s *session) cancelInflight(reqID string) {
+	s.mu.Lock()
+	cancel := s.inflight[reqID]
+	delete(s.inflight, reqID)
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func runSession(ctx context.Context, cfg Config, loadedModel, llamaURL string, sup *llama.Supervisor) error {
 	u, err := url.Parse(cfg.ServerURL)
 	if err != nil {
 		return err
@@ -116,11 +237,11 @@ func connectAndServe(ctx context.Context, cfg Config, loadedModel string, sup *l
 		Version:     version.Version,
 		LoadedModel: loadedModel,
 	}
-	msg, err := proto.Encode(proto.MsgHello, hello)
+	helloMsg, err := proto.Encode(proto.MsgHello, hello)
 	if err != nil {
 		return err
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+	if err := conn.WriteMessage(websocket.TextMessage, helloMsg); err != nil {
 		return err
 	}
 
@@ -140,42 +261,19 @@ func connectAndServe(ctx context.Context, cfg Config, loadedModel string, sup *l
 	}
 	log.Printf("connected as %s (server v%s, heartbeat every %s)", welcome.AssignedID, welcome.ServerVersion, hbEvery)
 
-	hbCtx, cancel := context.WithCancel(ctx)
+	sess := newSession(conn, loadedModel, llamaURL)
+	sessCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
 	errCh := make(chan error, 3)
-
-	go func() {
-		t := time.NewTicker(hbEvery)
-		defer t.Stop()
-		for {
-			select {
-			case <-hbCtx.Done():
-				return
-			case <-t.C:
-				hb := proto.Heartbeat{Idle: false} // TODO: real idle detection
-				msg, _ := proto.Encode(proto.MsgHeartbeat, hb)
-				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
-					errCh <- err
-					return
-				}
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				errCh <- err
-				return
-			}
-		}
-	}()
+	go func() { errCh <- sess.writeLoop(sessCtx) }()
+	go func() { errCh <- sess.readLoop(sessCtx) }()
+	go func() { sess.heartbeatLoop(sessCtx, hbEvery); errCh <- nil }()
 
 	if sup != nil {
 		go func() {
 			select {
-			case <-hbCtx.Done():
+			case <-sessCtx.Done():
 			case <-sup.Done():
 				errCh <- errors.New("llama-server exited")
 			}

@@ -35,3 +35,6 @@ go.work.sum
 # Build artifacts
 griad
 griad.exe
+
+# Local runtime artifacts (llama.cpp binaries, GGUF models, caches)
+.local/

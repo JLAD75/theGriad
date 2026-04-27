@@ -8,10 +8,14 @@ import (
 type MessageType string
 
 const (
-	MsgHello     MessageType = "hello"
-	MsgWelcome   MessageType = "welcome"
-	MsgHeartbeat MessageType = "heartbeat"
-	MsgError     MessageType = "error"
+	MsgHello       MessageType = "hello"
+	MsgWelcome     MessageType = "welcome"
+	MsgHeartbeat   MessageType = "heartbeat"
+	MsgError       MessageType = "error"
+	MsgChatRequest MessageType = "chat_request"
+	MsgChatChunk   MessageType = "chat_chunk"
+	MsgChatDone    MessageType = "chat_done"
+	MsgCancel      MessageType = "cancel"
 )
 
 type Envelope struct {
@@ -43,6 +47,33 @@ type Heartbeat struct {
 
 type ErrorMsg struct {
 	Message string `json:"message"`
+}
+
+// ChatRequest carries an OpenAI-style chat completion request from the
+// orchestrator to a worker. Body is the raw JSON request body, passed
+// through to the worker's local llama-server with stream forced to true.
+type ChatRequest struct {
+	RequestID string          `json:"request_id"`
+	Body      json.RawMessage `json:"body"`
+}
+
+// ChatChunk is one SSE line forwarded from llama-server back to the
+// orchestrator. Data includes the trailing newline so the orchestrator
+// can re-emit it verbatim.
+type ChatChunk struct {
+	RequestID string `json:"request_id"`
+	Data      string `json:"data"`
+}
+
+// ChatDone signals end of stream. Error is empty on success.
+type ChatDone struct {
+	RequestID string `json:"request_id"`
+	Error     string `json:"error,omitempty"`
+}
+
+// Cancel asks the worker to abort an in-flight request.
+type Cancel struct {
+	RequestID string `json:"request_id"`
 }
 
 func Encode(t MessageType, payload any) ([]byte, error) {

@@ -56,15 +56,28 @@ Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/gg
 
 Le worker spawne `llama-server` sur un port libre local (127.0.0.1), attend que `/health` réponde OK, puis se déclare au serveur avec son modèle chargé. Si llama-server crashe, le worker se déconnecte.
 
+### Chat distribué (un curl pour tester)
+
+Une fois un serveur et au moins un worker connecté avec un modèle :
+
+```bash
+curl -N -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"smollm2","messages":[{"role":"user","content":"Hello"}],"max_tokens":40}'
+```
+
+L'orchestrateur pick un worker, lui envoie la requête via WS, le worker l'exécute contre son `llama-server` local et streame les tokens en SSE jusqu'au client. Si le client se déconnecte, l'annulation est propagée jusqu'à llama-server.
+
 ## Roadmap MVP
 
 - [x] Squelette repo + binaire multi-commandes
 - [x] Registre des workers + heartbeat WS
 - [x] Worker : démarrage de `llama-server` en sous-processus
+- [x] Endpoint chat OpenAI-compatible côté serveur, routé vers un worker capable (avec streaming SSE et propagation des annulations)
 - [ ] Catalogue de modèles côté serveur (download GGUF)
-- [ ] Endpoint chat OpenAI-compatible côté serveur, routé vers un worker capable
 - [ ] TUI chat (Bubble Tea)
 - [ ] Idle detection Windows (`GetLastInputInfo`)
+- [ ] Auto-download de llama.cpp côté worker (vers l'autonomie totale)
 
 Plus tard : auth, chiffrement, vérification des outputs, scheduling load-aware, dashboard.
 

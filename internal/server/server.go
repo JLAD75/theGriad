@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -17,7 +18,6 @@ import (
 const (
 	heartbeatInterval = 5 * time.Second
 	heartbeatTimeout  = 20 * time.Second
-	writeWait         = 10 * time.Second
 	pongWait          = 60 * time.Second
 )
 
@@ -29,17 +29,40 @@ type Server struct {
 	cfg      Config
 	registry *Registry
 	upgrader websocket.Upgrader
+
+	// live worker connections, keyed by worker id
+	connsMu sync.RWMutex
+	conns   map[string]*workerConn
+
+	// pending chat requests, keyed by request_id
+	pendingMu sync.Mutex
+	pending   map[string]*pendingReq
+}
+
+// workerConn wraps an active WebSocket connection to a worker. All writes
+// go through the out channel so that multiple producers (chat router,
+// cancellation, etc.) never write concurrently to the underlying conn.
+type workerConn struct {
+	id   string
+	conn *websocket.Conn
+	out  chan []byte
+}
+
+type pendingReq struct {
+	ch       chan proto.Envelope
+	workerID string
 }
 
 func New(cfg Config) *Server {
 	return &Server{
 		cfg:      cfg,
 		registry: NewRegistry(),
+		conns:    make(map[string]*workerConn),
+		pending:  make(map[string]*pendingReq),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
-			// MVP: no origin check. Will be tightened with auth.
-			CheckOrigin: func(r *http.Request) bool { return true },
+			CheckOrigin:     func(r *http.Request) bool { return true },
 		},
 	}
 }
@@ -48,12 +71,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/workers", s.handleListWorkers)
+	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("/ws/worker", s.handleWorkerWS)
 
-	srv := &http.Server{
-		Addr:    s.cfg.Addr,
-		Handler: mux,
-	}
+	srv := &http.Server{Addr: s.cfg.Addr, Handler: mux}
 
 	go func() {
 		<-ctx.Done()
@@ -133,6 +154,17 @@ func (s *Server) serveWorker(conn *websocket.Conn) {
 	defer s.registry.Remove(worker.ID)
 	log.Printf("worker connected: id=%s host=%s os=%s/%s cpus=%d model=%q", worker.ID, worker.Hostname, worker.OS, worker.Arch, worker.NumCPU, worker.LoadedModel)
 
+	wc := &workerConn{id: worker.ID, conn: conn, out: make(chan []byte, 64)}
+	s.connsMu.Lock()
+	s.conns[worker.ID] = wc
+	s.connsMu.Unlock()
+	defer func() {
+		s.connsMu.Lock()
+		delete(s.conns, worker.ID)
+		s.connsMu.Unlock()
+		s.cleanupWorkerPending(worker.ID)
+	}()
+
 	// 2) send Welcome
 	welcome := proto.Welcome{
 		AssignedID:     worker.ID,
@@ -140,13 +172,33 @@ func (s *Server) serveWorker(conn *websocket.Conn) {
 		HeartbeatEvery: heartbeatInterval,
 	}
 	msg, _ := proto.Encode(proto.MsgWelcome, welcome)
-	conn.SetWriteDeadline(time.Now().Add(writeWait))
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 		log.Printf("write welcome: %v", err)
 		return
 	}
 
-	// 3) read loop
+	// 3) write loop (reads from wc.out and writes to conn)
+	writeErr := make(chan error, 1)
+	writeCtx, cancelWrites := context.WithCancel(context.Background())
+	defer cancelWrites()
+	go func() {
+		for {
+			select {
+			case <-writeCtx.Done():
+				writeErr <- nil
+				return
+			case msg := <-wc.out:
+				_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
+				if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+					writeErr <- err
+					return
+				}
+			}
+		}
+	}()
+
+	// 4) read loop
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
@@ -162,12 +214,23 @@ func (s *Server) serveWorker(conn *websocket.Conn) {
 		case proto.MsgHeartbeat:
 			var hb proto.Heartbeat
 			if err := json.Unmarshal(env.Data, &hb); err != nil {
-				log.Printf("worker %s heartbeat decode: %v", worker.ID, err)
 				continue
 			}
 			s.registry.Heartbeat(worker.ID, hb.Idle)
+		case proto.MsgChatChunk, proto.MsgChatDone:
+			s.routeChatReply(env)
 		default:
-			log.Printf("worker %s unknown msg type: %s", worker.ID, env.Type)
+			log.Printf("worker %s unknown msg: %s", worker.ID, env.Type)
+		}
+
+		// surface write errors quickly
+		select {
+		case err := <-writeErr:
+			if err != nil {
+				log.Printf("worker %s write loop: %v", worker.ID, err)
+				return
+			}
+		default:
 		}
 	}
 }
@@ -183,7 +246,7 @@ func (s *Server) reapLoop(ctx context.Context) {
 			now := time.Now()
 			for _, w := range s.registry.List() {
 				if now.Sub(w.LastHeartbeat) > heartbeatTimeout {
-					log.Printf("reaping stale worker %s (last hb %s ago)", w.ID, now.Sub(w.LastHeartbeat))
+					log.Printf("reaping stale worker %s", w.ID)
 					s.registry.Remove(w.ID)
 				}
 			}
