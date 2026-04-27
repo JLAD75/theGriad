@@ -32,9 +32,9 @@ go.work.sum
 # .vscode/
 .claude/
 
-# Build artifacts
-griad
-griad.exe
+# Build artifacts (root-only, do not match the cmd/griad/ package)
+/griad
+/griad.exe
 
 # Local runtime artifacts (llama.cpp binaries, GGUF models, caches)
 .local/

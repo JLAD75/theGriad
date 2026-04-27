@@ -43,6 +43,20 @@ curl http://localhost:8080/health
 curl http://localhost:8080/api/workers
 ```
 
+### Catalogue de modèles côté serveur
+
+Le serveur tient un dossier de modèles GGUF (`--models-dir`, par défaut `.local/server-models/`). Un admin peut alimenter le catalogue depuis n'importe quelle URL directe (Ollama registry, releases GitHub, miroir HuggingFace authentifié, etc.) :
+
+```bash
+# Lister
+./griad model list
+
+# Télécharger un modèle dans le catalogue (avec progress en stream)
+./griad model pull qwen2.5-3b https://registry.ollama.ai/v2/library/qwen2.5/blobs/sha256:5ee4f07cdb9beadbbb293e85803c569b01bd37ed059d2715faa7bb405f31caa6
+```
+
+Les modèles sont aussi servis sur `GET /api/models/{name}` (avec support `Range` pour resume), ce qui permettra aux workers de les fetcher automatiquement à terme.
+
 ### Worker avec un vrai modèle
 
 Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/ggml-org/llama.cpp/releases)). Récupère un binaire pré-compilé pour ta plateforme et un modèle GGUF, puis :
@@ -83,7 +97,8 @@ L'orchestrateur pick un worker, lui envoie la requête via WS, le worker l'exéc
 - [x] Worker : démarrage de `llama-server` en sous-processus
 - [x] Endpoint chat OpenAI-compatible côté serveur, routé vers un worker capable (avec streaming SSE et propagation des annulations)
 - [x] TUI chat (Bubble Tea)
-- [ ] Catalogue de modèles côté serveur (download GGUF)
+- [x] Catalogue de modèles côté serveur (download GGUF + API list/pull)
+- [ ] Worker : download depuis le catalogue serveur (au lieu d'un fichier local)
 - [ ] Idle detection Windows (`GetLastInputInfo`)
 - [ ] Auto-download de llama.cpp côté worker (vers l'autonomie totale)
 

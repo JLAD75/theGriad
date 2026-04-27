@@ -29,6 +29,8 @@ func main() {
 		runWorker(args)
 	case "chat":
 		runChat(args)
+	case "model":
+		runModel(args)
 	case "version", "-v", "--version":
 		fmt.Println("griad", version.Version)
 	case "help", "-h", "--help":
@@ -44,22 +46,24 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `griad — distributed LLM inference grid
 
 usage:
-  griad server [--addr :8080]
+  griad server [--addr :8080] [--models-dir PATH]
   griad worker --server ws://host:8080/ws/worker [--id NAME]
                [--llama-server PATH --model PATH [--llama-host H] [--llama-port N]]
-  griad chat   --server http://host:8080
+  griad chat   [--server http://host:8080]
+  griad model  list|pull ...
   griad version`)
 }
 
 func runServer(args []string) {
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 	addr := fs.String("addr", ":8080", "listen address")
+	modelsDir := fs.String("models-dir", ".local/server-models", "directory for the GGUF model catalog")
 	_ = fs.Parse(args)
 
 	ctx, stop := signalCtx()
 	defer stop()
 
-	s := server.New(server.Config{Addr: *addr})
+	s := server.New(server.Config{Addr: *addr, ModelsDir: *modelsDir})
 	if err := s.Run(ctx); err != nil {
 		log.Fatalf("server: %v", err)
 	}

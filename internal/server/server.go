@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -22,13 +23,16 @@ const (
 )
 
 type Config struct {
-	Addr string
+	Addr      string
+	ModelsDir string // path where the GGUF catalog lives (created if missing)
 }
 
 type Server struct {
 	cfg      Config
 	registry *Registry
 	upgrader websocket.Upgrader
+
+	models *modelStore
 
 	// live worker connections, keyed by worker id
 	connsMu sync.RWMutex
@@ -68,9 +72,21 @@ func New(cfg Config) *Server {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	if s.cfg.ModelsDir != "" {
+		store, err := newModelStore(s.cfg.ModelsDir)
+		if err != nil {
+			return fmt.Errorf("init catalog: %w", err)
+		}
+		s.models = store
+		log.Printf("model catalog: %s", s.cfg.ModelsDir)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/workers", s.handleListWorkers)
+	mux.HandleFunc("/api/models", s.handleListModels)
+	mux.HandleFunc("/api/models/pull", s.handlePullModel)
+	mux.HandleFunc("/api/models/", s.handleModelByName)
 	mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
 	mux.HandleFunc("/ws/worker", s.handleWorkerWS)
 
