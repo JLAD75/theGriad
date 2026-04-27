@@ -81,6 +81,15 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	}
 	modelDir, modelBase := filepath.Dir(absModel), filepath.Base(absModel)
 
+	// Once we set cmd.Dir, Go's exec on Windows resolves cmd.Path relative
+	// to cmd.Dir (not the parent's CWD), so a relative BinPath would be
+	// looked up under the model directory. Make BinPath absolute to keep
+	// the binary lookup independent of the child CWD.
+	absBin, err := filepath.Abs(s.cfg.BinPath)
+	if err != nil {
+		return fmt.Errorf("llama: resolve bin path: %w", err)
+	}
+
 	args := []string{
 		"--host", s.cfg.Host,
 		"--port", fmt.Sprintf("%d", port),
@@ -88,7 +97,7 @@ func (s *Supervisor) Start(ctx context.Context) error {
 	}
 	args = append(args, s.cfg.ExtraArgs...)
 
-	cmd := exec.CommandContext(ctx, s.cfg.BinPath, args...)
+	cmd := exec.CommandContext(ctx, absBin, args...)
 	cmd.Dir = modelDir
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
