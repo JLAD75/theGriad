@@ -56,9 +56,17 @@ Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/gg
 
 Le worker spawne `llama-server` sur un port libre local (127.0.0.1), attend que `/health` réponde OK, puis se déclare au serveur avec son modèle chargé. Si llama-server crashe, le worker se déconnecte.
 
-### Chat distribué (un curl pour tester)
+### Chat distribué
 
-Une fois un serveur et au moins un worker connecté avec un modèle :
+Le TUI :
+
+```bash
+./griad chat --server http://localhost:8080
+```
+
+Au démarrage le TUI fetch `/api/workers`, affiche le modèle dispo dans la barre de statut, et te laisse discuter. `Entrée` envoie, `Maj+Entrée` saute une ligne, `Esc` annule la génération en cours, `Ctrl+C` quitte. Les tokens streamés du worker apparaissent en temps réel.
+
+Ou directement en HTTP (utile pour scripter ou intégrer un autre client OpenAI-compatible) :
 
 ```bash
 curl -N -X POST http://localhost:8080/v1/chat/completions \
@@ -74,8 +82,8 @@ L'orchestrateur pick un worker, lui envoie la requête via WS, le worker l'exéc
 - [x] Registre des workers + heartbeat WS
 - [x] Worker : démarrage de `llama-server` en sous-processus
 - [x] Endpoint chat OpenAI-compatible côté serveur, routé vers un worker capable (avec streaming SSE et propagation des annulations)
+- [x] TUI chat (Bubble Tea)
 - [ ] Catalogue de modèles côté serveur (download GGUF)
-- [ ] TUI chat (Bubble Tea)
 - [ ] Idle detection Windows (`GetLastInputInfo`)
 - [ ] Auto-download de llama.cpp côté worker (vers l'autonomie totale)
 

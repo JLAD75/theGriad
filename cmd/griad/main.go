@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/JLAD75/theGriad/internal/server"
+	"github.com/JLAD75/theGriad/internal/tui"
 	"github.com/JLAD75/theGriad/internal/version"
 	"github.com/JLAD75/theGriad/internal/worker"
 )
@@ -89,9 +90,14 @@ func runWorker(args []string) {
 	}
 }
 
-func runChat(_ []string) {
-	fmt.Fprintln(os.Stderr, "chat TUI: not implemented yet — coming soon")
-	os.Exit(1)
+func runChat(args []string) {
+	fs := flag.NewFlagSet("chat", flag.ExitOnError)
+	serverURL := fs.String("server", "http://localhost:8080", "orchestrator base URL")
+	_ = fs.Parse(args)
+
+	if err := tui.Run(*serverURL); err != nil {
+		log.Fatalf("chat: %v", err)
+	}
 }
 
 func signalCtx() (context.Context, context.CancelFunc) {
