@@ -94,13 +94,21 @@ func (s *Server) pickWorker() (*workerConn, string, error) {
 	candidates := s.registry.List()
 	s.connsMu.RLock()
 	defer s.connsMu.RUnlock()
+	hasModel := false
 	for _, w := range candidates {
 		if w.LoadedModel == "" {
+			continue
+		}
+		hasModel = true
+		if !w.Idle {
 			continue
 		}
 		if c, ok := s.conns[w.ID]; ok {
 			return c, w.ID, nil
 		}
+	}
+	if hasModel {
+		return nil, "", errors.New("no idle worker available right now (workers are present but their users are active)")
 	}
 	return nil, "", errors.New("no worker available with a loaded model")
 }

@@ -64,10 +64,12 @@ Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/gg
 **Option A — one-liner volunteer** (recommandé) :
 
 ```bash
-./griad worker --server http://orchestrator:8080 --catalog-model qwen2.5-3b
+./griad worker --server http://orchestrator:8080 --catalog-model qwen2.5-3b --idle-threshold 3m
 ```
 
 Si `--llama-server` n'est pas fourni, le worker auto-installe `llama.cpp` depuis les releases GitHub dans `.local/llama/` (Windows amd64/arm64 pour l'instant ; sur autres OS, passe `--llama-server PATH` manuellement). Le modèle est ensuite fetché depuis le catalogue de l'orchestrateur, caché dans `.local/worker-models/`. Au prochain lancement, les deux caches évitent toute redescente.
+
+`--idle-threshold 3m` active le mode BOINC : la machine ne contribue que lorsque l'utilisateur est inactif depuis au moins 3 minutes (détection via `GetLastInputInfo` sur Windows). Sans ce flag, le worker contribue en permanence — utile pour un serveur dédié.
 
 **Option B — fichier local** (utile en dev) :
 
@@ -112,7 +114,7 @@ L'orchestrateur pick un worker, lui envoie la requête via WS, le worker l'exéc
 - [x] Catalogue de modèles côté serveur (download GGUF + API list/pull)
 - [x] Worker : download depuis le catalogue serveur via `--catalog-model NAME`
 - [x] Auto-install de `llama-server` côté worker (one-liner volunteer)
-- [ ] Idle detection Windows (`GetLastInputInfo`)
+- [x] Idle detection Windows (`GetLastInputInfo`) — worker contribue uniquement quand l'utilisateur est inactif
 
 Plus tard : auth, chiffrement, vérification des outputs, scheduling load-aware, dashboard.
 

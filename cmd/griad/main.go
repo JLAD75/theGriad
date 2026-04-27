@@ -82,6 +82,7 @@ func runWorker(args []string) {
 	cacheDir := fs.String("cache-dir", ".local/worker-models", "local cache for models pulled from the catalog")
 	llamaHost := fs.String("llama-host", "127.0.0.1", "host for the local llama-server bind")
 	llamaPort := fs.Int("llama-port", 0, "port for llama-server (0 = pick a free one)")
+	idleThreshold := fs.Duration("idle-threshold", 0, "BOINC mode: only contribute when the user has been inactive for at least this long (e.g. 3m). 0 = always contribute (default)")
 	_ = fs.Parse(args)
 
 	ctx, stop := signalCtx()
@@ -97,6 +98,7 @@ func runWorker(args []string) {
 		CacheDir:      *cacheDir,
 		LlamaHost:     *llamaHost,
 		LlamaPort:     *llamaPort,
+		IdleThreshold: *idleThreshold,
 	}); err != nil {
 		log.Fatalf("worker: %v", err)
 	}

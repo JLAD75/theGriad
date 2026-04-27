@@ -17,6 +17,7 @@ import (
 
 	"github.com/JLAD75/theGriad/internal/proto"
 	"github.com/JLAD75/theGriad/internal/version"
+	"github.com/JLAD75/theGriad/internal/worker/idle"
 	"github.com/JLAD75/theGriad/internal/worker/llama"
 )
 
@@ -39,6 +40,12 @@ type Config struct {
 	LlamaHost     string
 	LlamaPort     int
 	ReadyAfter    time.Duration // how long to wait for llama-server /health
+
+	// IdleThreshold enables BOINC-style gating: the worker reports
+	// Idle=true only when the user has been inactive for at least this
+	// duration. Zero (the default) keeps the worker always available
+	// — convenient for dev / dedicated servers.
+	IdleThreshold time.Duration
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -144,20 +151,33 @@ type session struct {
 	loadedModel string
 	llamaURL    string
 
+	idleThreshold time.Duration // 0 = always idle (dev mode)
+
 	out chan []byte // serialized envelopes pending write
 
 	mu       sync.Mutex
 	inflight map[string]context.CancelFunc // request_id -> cancel
 }
 
-func newSession(conn *websocket.Conn, loadedModel, llamaURL string) *session {
+func newSession(conn *websocket.Conn, loadedModel, llamaURL string, idleThreshold time.Duration) *session {
 	return &session{
-		conn:        conn,
-		loadedModel: loadedModel,
-		llamaURL:    llamaURL,
-		out:         make(chan []byte, 64),
-		inflight:    make(map[string]context.CancelFunc),
+		conn:          conn,
+		loadedModel:   loadedModel,
+		llamaURL:      llamaURL,
+		idleThreshold: idleThreshold,
+		out:           make(chan []byte, 64),
+		inflight:      make(map[string]context.CancelFunc),
 	}
+}
+
+// computeIdle returns the worker's current idle status for the
+// heartbeat. When idleThreshold is zero (dev mode), it always reports
+// idle so the worker stays available.
+func (s *session) computeIdle() bool {
+	if s.idleThreshold <= 0 {
+		return true
+	}
+	return idle.SinceLastInput() >= s.idleThreshold
 }
 
 // send queues an envelope for the writeLoop. Drops on full buffer rather
@@ -198,7 +218,7 @@ func (s *session) heartbeatLoop(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.send(proto.MsgHeartbeat, proto.Heartbeat{Idle: false}) // TODO: real idle
+			s.send(proto.MsgHeartbeat, proto.Heartbeat{Idle: s.computeIdle()})
 		}
 	}
 }
@@ -303,7 +323,7 @@ func runSession(ctx context.Context, cfg Config, loadedModel, llamaURL string, s
 	}
 	log.Printf("connected as %s (server v%s, heartbeat every %s)", welcome.AssignedID, welcome.ServerVersion, hbEvery)
 
-	sess := newSession(conn, loadedModel, llamaURL)
+	sess := newSession(conn, loadedModel, llamaURL, cfg.IdleThreshold)
 	sessCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

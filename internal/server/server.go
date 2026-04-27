@@ -165,6 +165,10 @@ func (s *Server) serveWorker(conn *websocket.Conn) {
 		GPUs:        hello.GPUs,
 		Version:     hello.Version,
 		LoadedModel: hello.LoadedModel,
+		// Default to idle until the first heartbeat reports otherwise.
+		// Without this, a just-connected worker would be invisible to
+		// pickWorker for ~5s (until its first heartbeat).
+		Idle: true,
 	}
 	s.registry.Add(worker)
 	defer s.registry.Remove(worker.ID)
