@@ -200,6 +200,11 @@ func (s *Server) serveWorker(conn *websocket.Conn) {
 
 	// 4) read loop
 	for {
+		// Refresh the read deadline on each iteration so any inbound traffic
+		// (heartbeat, chat reply) keeps the connection alive. Without this,
+		// the deadline set once at session start would expire after pongWait
+		// even when the worker is sending heartbeats every 5s.
+		_ = conn.SetReadDeadline(time.Now().Add(pongWait))
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("worker %s disconnected: %v", worker.ID, err)
