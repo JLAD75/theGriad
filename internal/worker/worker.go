@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/url"
 	"os"
@@ -20,22 +21,29 @@ import (
 )
 
 type Config struct {
+	// ServerURL is the orchestrator endpoint. Accepted forms:
+	//   http://host:8080            (recommended, same as griad chat)
+	//   https://host:8080
+	//   ws://host:8080/ws/worker    (legacy, still accepted)
 	ServerURL string
 	WorkerID  string
 
-	// Llama spawning. If LlamaBin and ModelPath are both set, the worker
-	// supervises a llama-server child process. Otherwise it runs in
-	// heartbeat-only mode (useful for connectivity tests).
-	LlamaBin   string
-	ModelPath  string
-	LlamaHost  string
-	LlamaPort  int
-	ReadyAfter time.Duration // how long to wait for /health
+	// Llama spawning. If LlamaBin is set with either ModelPath or
+	// CatalogModel, the worker supervises a llama-server child process.
+	// Without a model, it runs in heartbeat-only mode (connectivity test).
+	LlamaBin     string
+	ModelPath    string // local GGUF path (mutually exclusive with CatalogModel)
+	CatalogModel string // model name in the orchestrator catalog
+	CacheDir     string // local cache for models pulled from the catalog
+	LlamaHost    string
+	LlamaPort    int
+	ReadyAfter   time.Duration // how long to wait for llama-server /health
 }
 
 func Run(ctx context.Context, cfg Config) error {
-	if cfg.ServerURL == "" {
-		return errors.New("server URL is required")
+	httpBase, wsURL, err := splitWorkerEndpoint(cfg.ServerURL)
+	if err != nil {
+		return err
 	}
 	if cfg.WorkerID == "" {
 		cfg.WorkerID = defaultWorkerID()
@@ -43,14 +51,33 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.ReadyAfter == 0 {
 		cfg.ReadyAfter = 2 * time.Minute
 	}
+	if cfg.CacheDir == "" {
+		cfg.CacheDir = ".local/worker-models"
+	}
+	if cfg.ModelPath != "" && cfg.CatalogModel != "" {
+		return errors.New("--model and --catalog-model are mutually exclusive")
+	}
+
+	// Resolve the model: either a local path or a catalog name to fetch.
+	modelPath := cfg.ModelPath
+	if cfg.CatalogModel != "" {
+		if cfg.LlamaBin == "" {
+			return errors.New("--llama-server is required when --catalog-model is set")
+		}
+		path, err := fetchFromCatalog(ctx, httpBase, cfg.CatalogModel, cfg.CacheDir)
+		if err != nil {
+			return fmt.Errorf("catalog: %w", err)
+		}
+		modelPath = path
+	}
 
 	loadedModel := ""
 	llamaURL := ""
 	var sup *llama.Supervisor
-	if cfg.LlamaBin != "" && cfg.ModelPath != "" {
+	if cfg.LlamaBin != "" && modelPath != "" {
 		s, err := llama.New(llama.Config{
 			BinPath:   cfg.LlamaBin,
-			ModelPath: cfg.ModelPath,
+			ModelPath: modelPath,
 			Host:      cfg.LlamaHost,
 			Port:      cfg.LlamaPort,
 		})
@@ -66,13 +93,15 @@ func Run(ctx context.Context, cfg Config) error {
 		if err := sup.WaitReady(ctx, cfg.ReadyAfter); err != nil {
 			return err
 		}
-		loadedModel = filepath.Base(cfg.ModelPath)
+		loadedModel = filepath.Base(modelPath)
 		llamaURL = sup.URL()
-	} else if cfg.LlamaBin != "" || cfg.ModelPath != "" {
-		return errors.New("--llama-server and --model must be set together")
+	} else if cfg.LlamaBin != "" || modelPath != "" {
+		return errors.New("--llama-server and --model (or --catalog-model) must be set together")
 	} else {
 		log.Printf("worker running in heartbeat-only mode (no --model)")
 	}
+
+	cfg.ServerURL = wsURL // runSession dials the WS URL
 
 	backoff := time.Second
 	const maxBackoff = 30 * time.Second

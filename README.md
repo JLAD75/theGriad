@@ -59,16 +59,31 @@ Les modèles sont aussi servis sur `GET /api/models/{name}` (avec support `Range
 
 ### Worker avec un vrai modèle
 
-Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/ggml-org/llama.cpp/releases)). Récupère un binaire pré-compilé pour ta plateforme et un modèle GGUF, puis :
+Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/ggml-org/llama.cpp/releases)). Deux façons de lui donner un modèle :
+
+**Option A — depuis le catalogue serveur** (recommandé) :
 
 ```bash
 ./griad worker \
-  --server ws://localhost:8080/ws/worker \
+  --server http://localhost:8080 \
+  --llama-server /chemin/vers/llama-server[.exe] \
+  --catalog-model qwen2.5-3b
+```
+
+Le worker télécharge le modèle depuis l'orchestrateur (`/api/models/{name}`), le cache localement dans `.local/worker-models/`, puis lance `llama-server` dessus. Au prochain démarrage, le cache évite de re-télécharger.
+
+**Option B — fichier local** (utile en dev) :
+
+```bash
+./griad worker \
+  --server http://localhost:8080 \
   --llama-server /chemin/vers/llama-server[.exe] \
   --model /chemin/vers/modele.gguf
 ```
 
-Le worker spawne `llama-server` sur un port libre local (127.0.0.1), attend que `/health` réponde OK, puis se déclare au serveur avec son modèle chargé. Si llama-server crashe, le worker se déconnecte.
+Dans les deux cas, le worker spawne `llama-server` sur un port libre local (127.0.0.1), attend que `/health` réponde OK, puis se déclare au serveur avec son modèle chargé. Si llama-server crashe, le worker se déconnecte.
+
+> Le flag `--server` accepte aussi l'ancienne forme `ws://host:8080/ws/worker` pour compat.
 
 ### Chat distribué
 
@@ -98,7 +113,7 @@ L'orchestrateur pick un worker, lui envoie la requête via WS, le worker l'exéc
 - [x] Endpoint chat OpenAI-compatible côté serveur, routé vers un worker capable (avec streaming SSE et propagation des annulations)
 - [x] TUI chat (Bubble Tea)
 - [x] Catalogue de modèles côté serveur (download GGUF + API list/pull)
-- [ ] Worker : download depuis le catalogue serveur (au lieu d'un fichier local)
+- [x] Worker : download depuis le catalogue serveur via `--catalog-model NAME`
 - [ ] Idle detection Windows (`GetLastInputInfo`)
 - [ ] Auto-download de llama.cpp côté worker (vers l'autonomie totale)
 
