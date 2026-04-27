@@ -28,16 +28,17 @@ type Config struct {
 	ServerURL string
 	WorkerID  string
 
-	// Llama spawning. If LlamaBin is set with either ModelPath or
-	// CatalogModel, the worker supervises a llama-server child process.
-	// Without a model, it runs in heartbeat-only mode (connectivity test).
-	LlamaBin     string
-	ModelPath    string // local GGUF path (mutually exclusive with CatalogModel)
-	CatalogModel string // model name in the orchestrator catalog
-	CacheDir     string // local cache for models pulled from the catalog
-	LlamaHost    string
-	LlamaPort    int
-	ReadyAfter   time.Duration // how long to wait for llama-server /health
+	// Llama spawning. If LlamaBin is unset and a model is requested, the
+	// worker auto-installs llama.cpp into LlamaCacheDir. Without a model,
+	// it runs in heartbeat-only mode (connectivity test).
+	LlamaBin      string
+	LlamaCacheDir string // where auto-installed llama-server lives
+	ModelPath     string // local GGUF path (mutually exclusive with CatalogModel)
+	CatalogModel  string // model name in the orchestrator catalog
+	CacheDir      string // local cache for models pulled from the catalog
+	LlamaHost     string
+	LlamaPort     int
+	ReadyAfter    time.Duration // how long to wait for llama-server /health
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -54,16 +55,28 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = ".local/worker-models"
 	}
+	if cfg.LlamaCacheDir == "" {
+		cfg.LlamaCacheDir = ".local/llama"
+	}
 	if cfg.ModelPath != "" && cfg.CatalogModel != "" {
 		return errors.New("--model and --catalog-model are mutually exclusive")
+	}
+
+	wantModel := cfg.ModelPath != "" || cfg.CatalogModel != ""
+
+	// Auto-install llama-server if a model is requested but no binary path
+	// was provided. Skipped when running in heartbeat-only mode.
+	if wantModel && cfg.LlamaBin == "" {
+		bin, err := ensureLlamaServer(ctx, cfg.LlamaCacheDir, "")
+		if err != nil {
+			return err
+		}
+		cfg.LlamaBin = bin
 	}
 
 	// Resolve the model: either a local path or a catalog name to fetch.
 	modelPath := cfg.ModelPath
 	if cfg.CatalogModel != "" {
-		if cfg.LlamaBin == "" {
-			return errors.New("--llama-server is required when --catalog-model is set")
-		}
 		path, err := fetchFromCatalog(ctx, httpBase, cfg.CatalogModel, cfg.CacheDir)
 		if err != nil {
 			return fmt.Errorf("catalog: %w", err)

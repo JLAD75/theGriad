@@ -61,16 +61,13 @@ Les modèles sont aussi servis sur `GET /api/models/{name}` (avec support `Range
 
 Le worker supervise `llama-server` (binaire de [llama.cpp](https://github.com/ggml-org/llama.cpp/releases)). Deux façons de lui donner un modèle :
 
-**Option A — depuis le catalogue serveur** (recommandé) :
+**Option A — one-liner volunteer** (recommandé) :
 
 ```bash
-./griad worker \
-  --server http://localhost:8080 \
-  --llama-server /chemin/vers/llama-server[.exe] \
-  --catalog-model qwen2.5-3b
+./griad worker --server http://orchestrator:8080 --catalog-model qwen2.5-3b
 ```
 
-Le worker télécharge le modèle depuis l'orchestrateur (`/api/models/{name}`), le cache localement dans `.local/worker-models/`, puis lance `llama-server` dessus. Au prochain démarrage, le cache évite de re-télécharger.
+Si `--llama-server` n'est pas fourni, le worker auto-installe `llama.cpp` depuis les releases GitHub dans `.local/llama/` (Windows amd64/arm64 pour l'instant ; sur autres OS, passe `--llama-server PATH` manuellement). Le modèle est ensuite fetché depuis le catalogue de l'orchestrateur, caché dans `.local/worker-models/`. Au prochain lancement, les deux caches évitent toute redescente.
 
 **Option B — fichier local** (utile en dev) :
 
@@ -114,8 +111,8 @@ L'orchestrateur pick un worker, lui envoie la requête via WS, le worker l'exéc
 - [x] TUI chat (Bubble Tea)
 - [x] Catalogue de modèles côté serveur (download GGUF + API list/pull)
 - [x] Worker : download depuis le catalogue serveur via `--catalog-model NAME`
+- [x] Auto-install de `llama-server` côté worker (one-liner volunteer)
 - [ ] Idle detection Windows (`GetLastInputInfo`)
-- [ ] Auto-download de llama.cpp côté worker (vers l'autonomie totale)
 
 Plus tard : auth, chiffrement, vérification des outputs, scheduling load-aware, dashboard.
 

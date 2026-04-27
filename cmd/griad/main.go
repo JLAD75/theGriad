@@ -48,7 +48,8 @@ func usage() {
 usage:
   griad server [--addr :8080] [--models-dir PATH]
   griad worker [--server http://host:8080] [--id NAME]
-               [--llama-server PATH (--model PATH | --catalog-model NAME)
+               [(--model PATH | --catalog-model NAME)
+                [--llama-server PATH] [--llama-cache-dir PATH]
                 [--cache-dir PATH] [--llama-host H] [--llama-port N]]
   griad chat   [--server http://host:8080]
   griad model  list|pull ...
@@ -74,7 +75,8 @@ func runWorker(args []string) {
 	fs := flag.NewFlagSet("worker", flag.ExitOnError)
 	serverURL := fs.String("server", "http://localhost:8080", "orchestrator URL (http://host:port; ws:// also accepted)")
 	id := fs.String("id", "", "worker id (default: hostname-timestamp)")
-	llamaBin := fs.String("llama-server", "", "path to llama-server binary (optional; if unset, runs in heartbeat-only mode)")
+	llamaBin := fs.String("llama-server", "", "path to llama-server binary (auto-installed if omitted and a model is set)")
+	llamaCacheDir := fs.String("llama-cache-dir", ".local/llama", "where to install llama.cpp when --llama-server is omitted")
 	model := fs.String("model", "", "path to a local GGUF file")
 	catalogModel := fs.String("catalog-model", "", "name of a model to fetch from the orchestrator catalog (alternative to --model)")
 	cacheDir := fs.String("cache-dir", ".local/worker-models", "local cache for models pulled from the catalog")
@@ -86,14 +88,15 @@ func runWorker(args []string) {
 	defer stop()
 
 	if err := worker.Run(ctx, worker.Config{
-		ServerURL:    *serverURL,
-		WorkerID:     *id,
-		LlamaBin:     *llamaBin,
-		ModelPath:    *model,
-		CatalogModel: *catalogModel,
-		CacheDir:     *cacheDir,
-		LlamaHost:    *llamaHost,
-		LlamaPort:    *llamaPort,
+		ServerURL:     *serverURL,
+		WorkerID:      *id,
+		LlamaBin:      *llamaBin,
+		LlamaCacheDir: *llamaCacheDir,
+		ModelPath:     *model,
+		CatalogModel:  *catalogModel,
+		CacheDir:      *cacheDir,
+		LlamaHost:     *llamaHost,
+		LlamaPort:     *llamaPort,
 	}); err != nil {
 		log.Fatalf("worker: %v", err)
 	}
